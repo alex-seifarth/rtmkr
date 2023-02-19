@@ -146,13 +146,14 @@ repo_find_root() {
 			return 1
 		fi
 	done
+	return 1
 }
 
 # repo_init
 # Initializes a file cache repo in the current directory
 repo_init() {
 	local upper=$(repo_find_root)
-	if [[ $? -eq 0 ]]; then
+	if [[ ! -z "$upper" ]]; then
 		echo "ERROR: There is already a file cache repository in $upper." >&2
 		echo "       Nesting repositories is not supported." >&2
 		return 1
@@ -174,6 +175,11 @@ REPO_REGISTRY=".registry"
 case "$1" in
 	"init")
 		repo_init || exit 1
+		exit 0
+		;;
+	"get-dir")
+		repo_find_root
+		echo $?
 		exit 0
 		;;
 	*)
