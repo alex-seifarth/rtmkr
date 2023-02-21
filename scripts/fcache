@@ -72,6 +72,30 @@ repo_catalog_get() {
 	esac
 }
 
+repo_catalog_import() {
+	local impfile="$1"
+	[[ ! -e "$impfile" ]] && { echo "FATAL: no such file '$impfile'" >&2; return 1; }
+
+	cp -f "$REPO_CATALOG" "$REPO_CATALOG.bak"
+
+	cat "$impfile" | \
+	while read line; do
+		line="$( echo "$line" | xargs )" # trim white spaces
+		if [[ ! -z "$line" && "$line" != \#* ]]; then
+			local pkg="$(echo $line | awk '{print $1}')"
+			local url="$(echo $line | awk '{print $2}')"
+			local chksm="$(echo $line | awk '{print $3}')"
+			repo_catalog_add "$pkg" "$url" "$chksm" >&2
+			if [[ $? -ne 0 ]]; then
+				cp -f "$REPO_CATALOG.bak" "$REPO_CATALOG"
+				echo "ERROR: aborted catalog import" >&2
+				return 2
+			fi
+			echo "imported: $pkg" >&2
+		fi
+	done
+}
+
 # repo_get <sname>
 # Outputs the path to the downloaded file or nothing.
 # @arg sname	Package short name.
@@ -122,6 +146,27 @@ repo_download() {
 	return 0
 }
 
+repo_load() {
+	local snames=$@
+
+	if [[ -z "$snames" ]]; then
+		snames="$(cat "$REPO_CATALOG" | awk '{print $1}')"
+	fi
+
+     	declare -A errors
+	for pkg in $snames; do
+		repo_get "$pkg"
+		[[ $? -ne 0 ]] && errors["$pkg"]=$?
+	done
+
+	if [[ ${#errors[@]} -ne 0 ]]; then
+		echo "ERRORs occured for the following packages" >&2
+		echo "$errors" >&2
+		return 1
+	fi
+	return 0
+}
+
 repo_check_sname() {
 	local sname="$1"
 	[[ "$sname" =~ '\ |\' ]] && { echo "package id '$sname' must not contain spaces." >&2; return 1; }
@@ -152,6 +197,7 @@ repo_find_root() {
 # repo_init
 # Initializes a file cache repo in the current directory
 repo_init() {
+	local import_catalog="$1"
 	local upper=$(repo_find_root)
 	if [[ ! -z "$upper" ]]; then
 		echo "ERROR: There is already a file cache repository in $upper." >&2
@@ -164,6 +210,13 @@ repo_init() {
 		rm -rf "$REPO_DIR_NAME";
 		return 3;
 	}
+
+	if [[ ! -z "$import_catalog" ]]; then
+		local pwd=$(pwd)
+		cd "$REPO_DIR_NAME"
+		repo_catalog_import "$import_catalog"
+		cd "$pwd"
+	fi
 }
 
 REPO_DIR_NAME=".fcache"
@@ -171,16 +224,21 @@ REPO_CATALOG=".catalog"
 REPO_LOCK_FILE=".lock"
 REPO_LOCK_FD=100
 REPO_REGISTRY=".registry"
+IMPORT_FILE=
 
 case "$1" in
 	"init")
-		repo_init || exit 1
+		[[ ! -z "$2" ]] && IMPORT_FILE="$(realpath "$2")"
+		repo_init "$IMPORT_FILE" || exit 1
 		exit 0
 		;;
 	"get-dir")
 		repo_find_root
 		echo $?
 		exit 0
+		;;
+	"cat-import")
+		IMPORT_FILE="$(realpath "$2")"
 		;;
 	*)
 		;;
@@ -209,8 +267,14 @@ case "$1" in
 	"cat-get")
 		repo_catalog_get "$2"
 		;;
+	"cat-import")
+		repo_catalog_import "$IMPORT_FILE"
+		;;
 	"get")
 		repo_get "$2"
+		;;
+	"load")
+		repo_load "${@:2}"
 		;;
 	*)
 		echo "Unknown command '$1'."
